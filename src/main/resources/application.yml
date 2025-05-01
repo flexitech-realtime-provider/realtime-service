@@ -1,0 +1,53 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: realtime-service
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/realtime_db
+  devtools:
+    restart:
+      enabled: true          # Default is true
+      exclude: static/**     # Exclude static files from triggering restart
+    livereload:
+      enabled: true          # Enable LiveReload (default: true)
+  jackson:
+    default-property-inclusion: non_null
+
+app:
+  jwt:
+    secret: zDhjJi+GFelRL2YYMwqQHWN43Rajge4zMLHtyrLznjfXkf+xr2r7FAgcI48e8UH7R7cgCx4y3ONyYwCMOhK2uA==
+    expiration-ms: 86400000    # 24 hours (valid for int)
+    refresh-expiration-ms: 2592000000  # 30 days (requires long)
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: method
+    persistAuthorization: true
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  file:
+    name: D:/logs/flexitech-realtime-providers/realtie-service/realtime.log   # Path to log file
+  level:
+    root: INFO           # Default log level
+    io.github.flexitech_realtime_provider: DEBUG  # Your package logging level
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB   # Rotate when file reaches 10MB
+      max-history: 30       # Keep 30 days of logs
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8765/eureka # Point to your custom port
+
+# external services
+external-services:
+  auth-service:
+    url: http://localhost:8080
