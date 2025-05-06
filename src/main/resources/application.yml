@@ -21,6 +21,7 @@ app:
     secret: zDhjJi+GFelRL2YYMwqQHWN43Rajge4zMLHtyrLznjfXkf+xr2r7FAgcI48e8UH7R7cgCx4y3ONyYwCMOhK2uA==
     expiration-ms: 86400000    # 24 hours (valid for int)
     refresh-expiration-ms: 2592000000  # 30 days (requires long)
+    issuer: flexitech.realtime.provider.auth-service
 
 springdoc:
   swagger-ui:

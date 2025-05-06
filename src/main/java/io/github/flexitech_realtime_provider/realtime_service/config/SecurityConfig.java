@@ -25,11 +25,14 @@ import java.util.List;
 public class SecurityConfig {
 
     private static final String SCOPE_PREFIX = "SCOPE_";
-    @Autowired
-    private JwtAuthFilter jwtAuthFilter;
+    private final JwtAuthFilter jwtAuthFilter;
 
     @Autowired
     private ApplicationAuthenticationEntryHandler authenticationEntryHandler;
+
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter) {
+        this.jwtAuthFilter = jwtAuthFilter;
+    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -54,7 +57,7 @@ public class SecurityConfig {
                         // Secure all other endpoints
                         .anyRequest().authenticated()
                 )
-                .exceptionHandling(exception-> exception.authenticationEntryPoint(authenticationEntryHandler))
+                /*.exceptionHandling(exception-> exception.authenticationEntryPoint(authenticationEntryHandler))*/
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
