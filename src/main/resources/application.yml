@@ -2,19 +2,24 @@ server:
   port: 8081
 
 spring:
+  main:
+    web-application-type: reactive
   application:
     name: realtime-service
   data:
     mongodb:
-      uri: mongodb://localhost:27017/realtime_db
+      uri: mongodb://localhost:27017,localhost:27018/realtime_db?replicaSet=rs0
   devtools:
     restart:
-      enabled: true          # Default is true
-      exclude: static/**     # Exclude static files from triggering restart
+      enabled: true
+      exclude: static/**
     livereload:
-      enabled: true          # Enable LiveReload (default: true)
+      enabled: true
   jackson:
     default-property-inclusion: non_null
+  webflux:
+    server:
+      idle-timeout: 60s
 
 app:
   jwt:
@@ -34,7 +39,7 @@ springdoc:
 
 logging:
   file:
-    name: D:/logs/flexitech-realtime-providers/realtie-service/realtime.log   # Path to log file
+    name: D:/logs/flexitech-realtime-providers/realtime-service/realtime.log   # Path to log file
   level:
     root: INFO           # Default log level
     io.github.flexitech_realtime_provider: DEBUG  # Your package logging level
@@ -42,11 +47,6 @@ logging:
     rollingpolicy:
       max-file-size: 10MB   # Rotate when file reaches 10MB
       max-history: 30       # Keep 30 days of logs
-
-eureka:
-  client:
-    service-url:
-      defaultZone: http://localhost:8765/eureka # Point to your custom port
 
 # external services
 external-services:

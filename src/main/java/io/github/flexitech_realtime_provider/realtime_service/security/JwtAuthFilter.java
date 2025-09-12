@@ -1,105 +1,103 @@
 package io.github.flexitech_realtime_provider.realtime_service.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.flexitech_realtime_provider.common.api.response.ApiResponse;
-import io.github.flexitech_realtime_provider.common.api.response.token.TokenResponse;
-import io.github.flexitech_realtime_provider.common.constant.AuthenticationScopes;
-import io.github.flexitech_realtime_provider.common.dtos.user.ClientDetailDTO;
+import io.github.flexitech_realtime_provider.common.exception.service.ServiceException;
 import io.github.flexitech_realtime_provider.common.exception.token.InvalidTokenException;
-import io.github.flexitech_realtime_provider.common.exception.token.UnauthorizedServiceException;
-import io.github.flexitech_realtime_provider.common.utils.jwt.JwtUtils;
-import io.github.flexitech_realtime_provider.realtime_service.clients.external.AuthServiceClient;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.security.authentication.*;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.ReactiveSecurityContextHolder;
+import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.util.StringUtils;
+import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.server.WebFilterChain;
+import reactor.core.publisher.Mono;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.nio.charset.StandardCharsets;
 
 @Component
 @Slf4j
-public class JwtAuthFilter extends OncePerRequestFilter {
+@RequiredArgsConstructor
+public class JwtAuthFilter implements WebFilter {
     private static final String SCOPE_PREFIX = "SCOPE_";
 
-    private final JwtUtils jwtUtils;
-
-    @Autowired
-    private AuthServiceClient authServiceClient;
-
-    public JwtAuthFilter(JwtUtils jwtUtils) {
-        this.jwtUtils = jwtUtils;
-    }
+    private final ReactiveAuthenticationManager authenticationManager;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain)
-            throws ServletException, IOException {
-        try {
-            String token = extractToken(request);
-            if (token != null && jwtUtils.validateToken(token)) {
-                ResponseEntity<ApiResponse<Object>> authResponse = authServiceClient.getTokenInfo(token);
-
-                if (authResponse.getStatusCode().is2xxSuccessful() && authResponse.getBody() != null && authResponse.getBody().isSuccess()) {
-                    String json = new ObjectMapper().writeValueAsString(authResponse.getBody().getData());
-                    TokenResponse tokenResponse = TokenResponse.fromJson(json);
-                    if(tokenResponse.getScopes().contains(AuthenticationScopes.REALTIME_SCOPE)){
-                        Authentication auth = createAuthentication(token);
-                        SecurityContextHolder.getContext().setAuthentication(auth);
-                    }else{
-                        throw new UnauthorizedServiceException("Not enough permission to access this resource.");
-                    }
-                } else {
-                    throw new RuntimeException("Token validation failed in auth service");
-                }
-
-            }/*else{
-                throw new InvalidTokenException("Invalid token!");
-            }*/
-        } catch (Exception e) {
-            log.error("Error on filter chain: {}", ExceptionUtils.getStackTrace(e));
-            SecurityContextHolder.clearContext();
-            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid JWT: " + e.getMessage());
-            return;
+    public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+        if (isPublicEndpoint(exchange.getRequest())) {
+            return chain.filter(exchange);
         }
 
-        filterChain.doFilter(request, response);
+        String token = extractToken(exchange.getRequest());
+        if (token == null || token.isEmpty()) {
+            // Handle missing token immediately before processing continues
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+            byte[] bytes = "{\"error\": \"Missing token\"}".getBytes(StandardCharsets.UTF_8);
+            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
+            return exchange.getResponse().writeWith(Mono.just(buffer));
+        }
+
+        return Mono.just(token)
+                .flatMap(t -> {
+                    Authentication authRequest = new PreAuthenticatedAuthenticationToken(t, null);
+                    return authenticationManager.authenticate(authRequest)
+                            .flatMap(authentication ->
+                                    chain.filter(exchange)
+                                            .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication))
+                            );
+                })
+                .onErrorResume(AuthenticationException.class, e -> {
+                    // Handle authentication errors
+                    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                    exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                    byte[] bytes = ("{\"error\": \"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
+                    DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
+                    return exchange.getResponse().writeWith(Mono.just(buffer));
+                });
     }
 
-    private String extractToken(HttpServletRequest request) {
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
+    private Mono<Void> authenticateAndProcess(String token, ServerWebExchange exchange, WebFilterChain chain) {
+        // Create authentication request object
+        Authentication authenticationRequest = new PreAuthenticatedAuthenticationToken(token, null);
+
+        return authenticationManager.authenticate(authenticationRequest)
+                .flatMap(authentication -> {
+                    return chain.filter(exchange)
+                            .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
+                })
+                .onErrorResume(ex -> {
+                    // Convert service exceptions to proper authentication exceptions
+                    if (ex instanceof InvalidTokenException) {
+                        return Mono.error(new BadCredentialsException("Invalid token", ex));
+                    }
+                    if (ex instanceof ServiceException) {
+                        return Mono.error(new AuthenticationServiceException("Authentication service error", ex));
+                    }
+                    return Mono.error(new AuthenticationCredentialsNotFoundException("Authentication failed", ex));
+                });
+    }
+
+    private boolean isPublicEndpoint(ServerHttpRequest request) {
+        String path = request.getPath().toString();
+        return path.startsWith("/swagger-ui") ||
+                path.startsWith("/v3/api-docs") ||
+                path.startsWith("/actuator/health");
+    }
+
+    private String extractToken(ServerHttpRequest request) {
+        String header = request.getHeaders().getFirst("Authorization");
+        if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
             return header.substring(7);
         }
         return null;
-    }
-
-    private Authentication createAuthentication(String token) {
-        String username = jwtUtils.extractUsername(token);
-        List<String> scopes = List.of(jwtUtils.extractScopes(token).split(","));
-
-        log.info("Token scopes: {}", scopes);
-
-        List<SimpleGrantedAuthority> authorities = scopes.stream()
-                .map(scope -> new SimpleGrantedAuthority(SCOPE_PREFIX + scope))
-                .collect(Collectors.toList());
-        System.out.println("authority: " + authorities);
-        return new UsernamePasswordAuthenticationToken(
-                new ClientDetailDTO(username, scopes, token),
-                null,
-                authorities
-        );
     }
 }
